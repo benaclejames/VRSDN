@@ -7,6 +7,8 @@ pub struct ChunkBasicHeader {
 }
 
 pub struct ChunkHeader {
+    pub basic_header: ChunkBasicHeader,
+
     pub timestamp: u32,
     pub message_length: u32,
     pub message_type_id: u8,
@@ -15,7 +17,7 @@ pub struct ChunkHeader {
 
 impl Serializable for ChunkBasicHeader {
     fn serialize(&self) -> Result<Vec<u8>, &'static str> {
-        Err("Not implemented")
+        return Ok(vec![self.fmt << 6 | self.csid]);
     }
 
     fn deserialize<R>(mut reader: R) -> Result<Self, &'static str> where R: io::Read, Self: Sized {
@@ -50,7 +52,19 @@ impl Serializable for ChunkBasicHeader {
 
 impl Serializable for ChunkHeader {
     fn serialize(&self) -> Result<Vec<u8>, &'static str> {
-        Err("Not implemented")
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&self.basic_header.serialize().unwrap());
+
+        // 3 byte timestamp
+        buf.extend_from_slice(&self.timestamp.to_be_bytes()[1..4]);
+        // 3 byte message length
+        buf.extend_from_slice(&self.message_length.to_be_bytes()[1..4]);
+        // 1 byte message type id
+        buf.push(self.message_type_id);
+        // 4 byte message stream id
+        buf.extend_from_slice(&self.message_stream_id.to_be_bytes());
+
+        Ok(buf)
     }
 
     fn deserialize<R>(mut reader: R) -> Result<Self, &'static str> where R: io::Read, Self: Sized {
@@ -77,6 +91,7 @@ impl Serializable for ChunkHeader {
                         let message_stream_id = u32::from_be_bytes(buf[7..11].try_into().unwrap());
 
                         Ok(ChunkHeader {
+                            basic_header,
                             timestamp,
                             message_length,
                             message_type_id,

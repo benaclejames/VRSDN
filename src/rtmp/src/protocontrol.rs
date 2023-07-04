@@ -1,7 +1,7 @@
 use crate::Serializable;
 use std::io;
 use std::io::Read;
-use amf::{Version};
+use amf::{Pair, Version};
 use amf::amf0::Value;
 
 pub struct SetChunkSize {
@@ -98,6 +98,14 @@ pub struct AMFMessage {
     pub information: Vec<(String, Value)>,
 }
 
+fn vec_pair_to_tuple(source: Vec<Pair<String, Value>>) -> Vec<(String, Value)> {
+    source.into_iter().map(|p| (p.key, p.value)).collect()
+}
+
+fn tuple_to_vec_pair(source: Vec<(String, Value)>) -> Vec<Pair<String, Value>> {
+    source.iter().map(|(k, v)| Pair { key: k.clone(), value: v.clone() }).collect()
+}
+
 impl Serializable for AMFMessage {
     fn deserialize<R>(mut reader: R) -> Result<Self, &'static str> where R: Read, Self: Sized {
         let command_name: String = match amf::Value::read_from(&mut reader, Version::Amf0) {
@@ -111,25 +119,29 @@ impl Serializable for AMFMessage {
         };
 
         let command_object: Vec<(String, Value)> = match amf::Value::read_from(&mut reader, Version::Amf0) {
-            Ok(amf::Value::Amf0(Value::Object {entries, ..})) => entries.into_iter().map(|p| (p.key, p.value)).collect(),
+            Ok(amf::Value::Amf0(Value::Object {entries, ..})) => vec_pair_to_tuple(entries),
             _ => Err("Error reading AMF0 Command Object")?,
+        };
+
+        let optional_info: Vec<(String, Value)> = match amf::Value::read_from(&mut reader, Version::Amf0) {
+            Ok(amf::Value::Amf0(Value::Object {entries, ..})) => vec_pair_to_tuple(entries),
+            _ => Vec::new()
         };
 
         Ok(AMFMessage {
             command_name,
             transaction_id,
             properties: command_object,
-            information: Vec::new(),
+            information: optional_info
         })
     }
 
     fn serialize(&self) -> Result<Vec<u8>, &'static str> {
-        let command_name = Value::from(Value::String(self.command_name.clone()));
-        let transaction_number = Value::from(Value::Number(self.transaction_id));
         let mut buf = Vec::new();
-        command_name.write_to(&mut buf).unwrap();
-        transaction_number.write_to(&mut buf).unwrap();
-
+        Value::from(Value::String(self.command_name.clone())).write_to(&mut buf).expect("Failed to serialize response name string");
+        Value::from(Value::Number(self.transaction_id)).write_to(&mut buf).expect("Failed to serialize response transaction id");
+        Value::from(Value::Object { class_name: None, entries: tuple_to_vec_pair(self.properties.clone())}).write_to(&mut buf).expect("Failed to serialize response props");
+        Value::from(Value::Object { class_name: None, entries: tuple_to_vec_pair(self.information.clone())}).write_to(&mut buf).expect("Failed to serialize response info");
         Ok(buf)
     }
 }

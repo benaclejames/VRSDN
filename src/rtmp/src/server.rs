@@ -1,9 +1,10 @@
 pub use crate::handshake::{CS0, CS1};
 use std::net::TcpStream;
 use std::io::{Read, ErrorKind, Write, Cursor};
-use crate::chunk::ChunkHeader;
+use crate::chunk::{ChunkBasicHeader, ChunkHeader};
 use crate::Serializable;
 use crate::protocontrol::{AMFMessage, SetChunkSize, SetPeerBandwidth, WindowAcknowledgementSize};
+use amf::amf0::Value::{String, Number};
 
 pub struct RtmpConnection {
     stream: TcpStream,
@@ -111,13 +112,30 @@ impl RtmpConnection {
         println!("Command name: {}", message.command_name);
         println!("Transaction ID: {}", message.transaction_id);
 
-
         match message.command_name.as_str() {
             "connect" => {
-                println!("Connect command");
-                self.send_message(WindowAcknowledgementSize { window_acknowledgement_size: 5000000 });
-                self.send_message(SetPeerBandwidth { window_acknowledgement_size: 5000000, limit_type: 1 });
-                self.send_message(SetChunkSize { chunk_size: 5000 });
+                self.send_message(WindowAcknowledgementSize { window_acknowledgement_size: 5000000 }, 2, 5, 0);
+                self.send_message(SetPeerBandwidth { window_acknowledgement_size: 5000000, limit_type: 1 }, 2, 6, 0);
+                self.send_message(SetChunkSize { chunk_size: 5000 }, 2, 1, 0);
+
+                self.send_message(AMFMessage {
+                    transaction_id: 1.0,
+                    command_name: "_result".to_string(),
+                    properties: vec![
+                        ("fmsVer".to_string(), String("FMS/3,0,1,123".to_string())),
+                        ("capabilities".to_string(), Number(31.0)),
+                        ("mode".to_string(), String("live".to_string())),
+                        ("objectEncoding".to_string(), Number(0.0)),
+                    ],
+                    information: vec![
+                        ("level".to_string(), String("status".to_string())),
+                        ("code".to_string(), String("NetConnection.Connect.Success".to_string())),
+                        ("description".to_string(), String("Connection succeeded.".to_string())),
+                        ("objectEncoding".to_string(), Number(0.0)),
+                    ],
+                }, 3, 20, 0);
+
+                println!("Successfully responded to connect request")
             }
             _ => {
                 println!("Unsupported command: {}", message.command_name);
@@ -143,10 +161,30 @@ impl RtmpConnection {
         }
     }
 
-    fn send_message<S>(&mut self, msg: S) where S : Serializable {
-        match msg.serialize() {
+    fn send_message<S>(&mut self, msg: S, chunk_stream_id: u8, type_id: u8, message_stream_id: u32) where S : Serializable {
+        let data = match msg.serialize() {
+            Ok(data) => data,
+            Err(err) => {
+                eprintln!("Error serializing message: {}", err);
+                return;
+            }
+        };
+
+        let header = ChunkHeader {
+            basic_header: ChunkBasicHeader {
+                fmt: 0,
+                csid: chunk_stream_id,
+            },
+            timestamp: 0,
+            message_length: data.len() as u32,
+            message_type_id: type_id,
+            message_stream_id,
+        };
+
+        match header.serialize() {
             Ok(buf) => {
                 self.stream.write_all(&buf).unwrap();
+                self.stream.write_all(&data).unwrap();
             }
             Err(err) => {
                 eprintln!("Error serializing message: {}", err);
