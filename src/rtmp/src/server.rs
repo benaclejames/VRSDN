@@ -4,7 +4,8 @@ use std::net::TcpStream;
 use std::io::{Read, ErrorKind, Write, Cursor};
 use crate::chunk::{ChunkBasicHeader, ChunkHeader};
 use crate::Serializable;
-use crate::protocontrol::{AMFMessage, SetChunkSize, SetPeerBandwidth, WindowAcknowledgementSize};
+use crate::control_message::{SetChunkSize, SetPeerBandwidth, WindowAcknowledgementSize};
+use crate::command_message::{AMFCall, AMFMessage, PlayMessage};
 use amf::amf0::Value::{String, Number};
 
 pub struct RtmpConnection {
@@ -114,51 +115,85 @@ impl RtmpConnection {
 
         match message.command_name.as_str() {
             "connect" => {
+                match AMFCall::deserialize(&mut cursor) {
+                    Ok(amf_call) => amf_call,
+                    Err(err) => {
+                        eprintln!("Error reading AMF call: {}", err);
+                        return;
+                    }
+                };
+
                 self.send_message(WindowAcknowledgementSize { window_acknowledgement_size: 5000000 }, 2, 5, 0);
                 self.send_message(SetPeerBandwidth { window_acknowledgement_size: 5000000, limit_type: 1 }, 2, 6, 0);
                 self.send_message(SetChunkSize { chunk_size: 5000 }, 2, 1, 0);
 
-                self.send_message(AMFMessage {
+                let response_header = AMFMessage {
                     transaction_id: 1.0,
                     command_name: "_result".to_string(),
-                    properties: vec![
+                };
+
+                let response_body = AMFCall {
+                    command_object: vec![
                         ("fmsVer".to_string(), String("FMS/3,0,1,123".to_string())),
                         ("capabilities".to_string(), Number(31.0)),
                         ("mode".to_string(), String("live".to_string())),
                         ("objectEncoding".to_string(), Number(0.0)),
                     ],
-                    information: vec![
+                    additional_args: vec![
                         ("level".to_string(), String("status".to_string())),
                         ("code".to_string(), String("NetConnection.Connect.Success".to_string())),
                         ("description".to_string(), String("Connection succeeded.".to_string())),
                         ("objectEncoding".to_string(), Number(0.0)),
                     ],
-                }, 3, 20, 0);
+                };
+
+                self.send_bytes([response_header.serialize().unwrap(), response_body.serialize().unwrap()].concat(), 3, 20, 0);
 
                 println!("Successfully responded to connect request")
             }
             "createStream" => {
-                self.send_message(AMFMessage {
+                let response_header = AMFMessage {
                     transaction_id: message.transaction_id,
                     command_name: "_result".to_string(),
-                    properties: Vec::new(),
-                    information: Vec::new(),
-                }, 3, 20, 0)
+                };
+
+                let response_body = AMFCall {
+                    command_object: Vec::new(),
+                    additional_args: Vec::new(),
+                };
+
+                self.send_bytes([response_header.serialize().unwrap(), response_body.serialize().unwrap()].concat(), 3, 20, 0);
             }
             "publish" => {
-                self.send_message(AMFMessage {
+                let response_header = AMFMessage {
                     transaction_id: 0.0,
                     command_name: "onStatus".to_string(),
-                    properties: Vec::new(),
-                    information: vec![
+                };
+
+                let response_body = AMFCall {
+                    command_object: Vec::new(),
+                    additional_args: vec![
                         ("code".to_string(), (String("NetStream.Publish.Start".to_string()))),
                         ("level".to_string(), (String("status".to_string()))),
                         ("description".to_string(), (String("Started publishing stream.".to_string()))),
                     ]
-                }, 3, 20, 0)
+                };
+
+                self.send_bytes([response_header.serialize().unwrap(), response_body.serialize().unwrap()].concat(), 3, 20, 0);
+            }
+            "play" => {
+                match PlayMessage::deserialize(&mut cursor) {
+                    Ok(msg) => {
+                        println!("Play message");
+                        // First, we set our chunk size to the max chunk size
+                    }
+                    Err(err) => {
+                        eprintln!("Error deserializing play message: {}", err);
+                    }
+                }
             }
             _ => {
-                println!("Unsupported command: {} with data: {:?}", message.command_name, message.information);
+                println!("Unsupported command: {}", message.command_name);
             }
         }
     }
@@ -171,8 +206,42 @@ impl RtmpConnection {
                 self.max_chunk_size = u32::from_be_bytes(buf[0..4].try_into().unwrap()) as usize;
                 println!("New max chunk size: {}", self.max_chunk_size);
             }
+            5 => {
+                println!("Window acknowledgement size");
+                match WindowAcknowledgementSize::deserialize(&buf[..]) {
+                    Ok(msg) => {
+                        println!("New window acknowledgement size: {}", msg.window_acknowledgement_size);
+                    }
+                    Err(err) => {
+                        eprintln!("Error deserializing window acknowledgement size: {}", err);
+                    }
+                }
+            }
             _ => {
                 println!("Unsupported control stream message type: {}", header.message_type_id);
+            }
+        }
+    }
+
+    fn send_bytes(&mut self, msg: Vec<u8>, chunk_stream_id: u8, type_id: u8, message_stream_id: u32) {
+        let header = ChunkHeader {
+            basic_header: ChunkBasicHeader {
+                fmt: 0,
+                csid: chunk_stream_id,
+            },
+            timestamp: 0,
+            message_length: msg.len() as u32,
+            message_type_id: type_id,
+            message_stream_id,
+        };
+
+        match header.serialize() {
+            Ok(buf) => {
+                self.stream.write_all(&buf).unwrap();
+                self.stream.write_all(&msg).unwrap();
+            }
+            Err(err) => {
+                eprintln!("Error serializing chunk header: {}", err);
             }
         }
     }
@@ -186,26 +255,7 @@ impl RtmpConnection {
             }
         };
 
-        let header = ChunkHeader {
-            basic_header: ChunkBasicHeader {
-                fmt: 0,
-                csid: chunk_stream_id,
-            },
-            timestamp: 0,
-            message_length: data.len() as u32,
-            message_type_id: type_id,
-            message_stream_id,
-        };
-
-        match header.serialize() {
-            Ok(buf) => {
-                self.stream.write_all(&buf).unwrap();
-                self.stream.write_all(&data).unwrap();
-            }
-            Err(err) => {
-                eprintln!("Error serializing message: {}", err);
-            }
-        }
+        self.send_bytes(data, chunk_stream_id, type_id, message_stream_id);
     }
 
     pub fn handle_connection(&mut self) {
@@ -254,8 +304,6 @@ impl RtmpConnection {
 
                     // If the size of this message would exceed the max chunk size, we need to do special handling
                     if header.message_length > self.max_chunk_size as u32 {
-                        println!("CSID {} has message length {} which exceeds max chunk size {}", header.basic_header.csid, header.message_length, self.max_chunk_size);
-
                         // Retrieve the incomplete chunk vector for the chunk stream ID
                         let chunk_vec = self.incomplete_chunks.entry(header.basic_header.csid).or_insert_with(Vec::new);
 
@@ -265,16 +313,17 @@ impl RtmpConnection {
                         // Check if we have a complete message
                         if chunk_vec.len() == header.message_length as usize {
                             // If we do, we parse it and continue
-                            println!("Found complete message of length {} and target length {}", chunk_vec.len(), header.message_length);
                             buf = chunk_vec.to_vec();
                             self.incomplete_chunks.remove(&header.basic_header.csid);
                         } else {
                             // Otherwise, we continue reading from the socket
-                            println!("Incomplete message of length {} and target length {}", chunk_vec.len(), header.message_length);
                             continue;
                         }
                     }
 
+                    if header.message_type_id == 8 {
+                        println!("{:?}", buf)
+                    }
 
                     if header.message_type_id == 20 {
                         self.handle_command_message(Cursor::new(&buf));
@@ -285,7 +334,6 @@ impl RtmpConnection {
                         self.handle_control_stream_msg(header, &buf);
                         continue;
                     }
-                    println!("Received message: {:?}", buf);
                 }
                 Err(err) => {
                     eprintln!("Error reading message: {}", err);

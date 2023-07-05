@@ -4,7 +4,8 @@ use std::net::TcpListener;
 mod server;
 mod handshake;
 mod chunk;
-mod protocontrol;
+mod control_message;
+mod command_message;
 
 trait Serializable {
     fn serialize(&self) -> Result<Vec<u8>, &'static str>;

@@ -22,7 +22,10 @@ impl Serializable for ChunkBasicHeader {
 
     fn deserialize<R>(mut reader: R) -> Result<Self, &'static str> where R: io::Read, Self: Sized {
         let mut buf = [0; 1];
-        reader.read_exact(&mut buf).unwrap();
+        match reader.read_exact(&mut buf) {
+            Ok(_) => {}
+            _ => Err("Error reading basic header")?,
+        };
         let fmt = buf[0] >> 6;  // Fmt is the first 2 bits
         let mut csid = buf[0] & 0b00111111;
 
