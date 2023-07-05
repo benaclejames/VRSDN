@@ -1,7 +1,7 @@
 use rtmp;
 
 fn main() {
-    println!("Hello, world!");
+    println!("Awaiting connection!");
 
     rtmp::start();
 }

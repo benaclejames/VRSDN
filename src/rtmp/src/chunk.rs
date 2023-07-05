@@ -41,14 +41,14 @@ impl Serializable for ChunkBasicHeader {
             }
         }
 
-        println!("fmt: {}, csid: {}", fmt, csid);
-
         Ok(ChunkBasicHeader {
             fmt,
             csid,
         })
     }
 }
+
+static mut PREV_CHUNK_HEADER: Option<ChunkHeader> = None;
 
 impl Serializable for ChunkHeader {
     fn serialize(&self) -> Result<Vec<u8>, &'static str> {
@@ -76,7 +76,7 @@ impl Serializable for ChunkHeader {
 
         // Now depending on the fmt, we read the rest of the header. If the fmt is 0, we read the
         // timestamp, message length and message type id.
-        match basic_header.fmt {
+        let header = match basic_header.fmt {
             0 => {
                 let mut buf = [0; 11];
                 match reader.read_exact(&mut buf) {
@@ -90,18 +90,103 @@ impl Serializable for ChunkHeader {
                         // 4 byte message stream id
                         let message_stream_id = u32::from_be_bytes(buf[7..11].try_into().unwrap());
 
-                        Ok(ChunkHeader {
+                        ChunkHeader {
                             basic_header,
                             timestamp,
                             message_length,
                             message_type_id,
                             message_stream_id,
-                        })
+                        }
                     }
                     _ => Err("Error reading full header")?,
                 }
             }
+            1 => {
+                let mut buf = [0; 7];
+                match reader.read_exact(&mut buf) {
+                    Ok(_) =>  {
+                        // 3 byte timestamp (we need to pad this to 4 bytes)
+                        let timestamp_delta = u32::from_be_bytes([0, buf[0], buf[1], buf[2]]);
+                        // 3 byte message length
+                        let message_length = u32::from_be_bytes([0, buf[3], buf[4], buf[5]]);
+                        // 1 byte message type id
+                        let message_type_id = buf[6];
+
+                        let previous_chunk = unsafe {
+                            PREV_CHUNK_HEADER.as_ref().unwrap()
+                        };
+                        
+                        let timestamp = previous_chunk.timestamp + timestamp_delta;
+
+                        ChunkHeader {
+                            basic_header,
+                            timestamp,
+                            message_length,
+                            message_type_id,
+                            message_stream_id: previous_chunk.message_stream_id
+                        }
+                    }
+                    _ => Err("Error reading full header")?,
+                }
+            }
+            2 => {
+                let mut buf = [0; 3];
+                match reader.read_exact(&mut buf) {
+                    Ok(_) => {
+                        let timestamp_delta = u32::from_be_bytes([0, buf[0], buf[1], buf[2]]);
+
+                        let previous_chunk = unsafe {
+                            PREV_CHUNK_HEADER.as_ref().unwrap()
+                        };
+
+                        let timestamp = previous_chunk.timestamp + timestamp_delta;
+
+                        ChunkHeader {
+                            basic_header,
+                            timestamp,
+                            message_length: previous_chunk.message_length,
+                            message_type_id: previous_chunk.message_type_id,
+                            message_stream_id: previous_chunk.message_stream_id
+                        }
+                    }
+                    _ => Err("Error reading full header")?,
+                }
+            }
+            3 => {
+                let previous_chunk = unsafe {
+                    PREV_CHUNK_HEADER.as_ref().unwrap()
+                };
+                previous_chunk.clone()
+            }
             _ => Err("Unsupported fmt")?,
+        };
+
+        // Copy the header and store it as the previous chunk header
+        unsafe {
+            PREV_CHUNK_HEADER = Some(header.clone());
+        }
+
+        Ok(header)
+    }
+}
+
+impl Clone for ChunkBasicHeader {
+    fn clone(&self) -> Self {
+        ChunkBasicHeader {
+            fmt: self.fmt,
+            csid: self.csid,
+        }
+    }
+}
+
+impl Clone for ChunkHeader {
+    fn clone(&self) -> Self {
+        ChunkHeader {
+            basic_header: self.basic_header.clone(),
+            timestamp: self.timestamp,
+            message_length: self.message_length,
+            message_type_id: self.message_type_id,
+            message_stream_id: self.message_stream_id,
         }
     }
 }

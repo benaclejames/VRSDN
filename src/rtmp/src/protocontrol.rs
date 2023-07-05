@@ -120,7 +120,7 @@ impl Serializable for AMFMessage {
 
         let command_object: Vec<(String, Value)> = match amf::Value::read_from(&mut reader, Version::Amf0) {
             Ok(amf::Value::Amf0(Value::Object {entries, ..})) => vec_pair_to_tuple(entries),
-            _ => Err("Error reading AMF0 Command Object")?,
+            _ => Vec::new()
         };
 
         let optional_info: Vec<(String, Value)> = match amf::Value::read_from(&mut reader, Version::Amf0) {

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 pub use crate::handshake::{CS0, CS1};
 use std::net::TcpStream;
 use std::io::{Read, ErrorKind, Write, Cursor};
@@ -9,6 +10,7 @@ use amf::amf0::Value::{String, Number};
 pub struct RtmpConnection {
     stream: TcpStream,
     max_chunk_size: usize,
+    incomplete_chunks: HashMap<u8, Vec<u8>>,
 }
 
 impl RtmpConnection {
@@ -16,6 +18,7 @@ impl RtmpConnection {
         RtmpConnection {
             stream,
             max_chunk_size: 128,
+            incomplete_chunks: HashMap::new(),
         }
     }
 
@@ -109,9 +112,6 @@ impl RtmpConnection {
             }
         };
 
-        println!("Command name: {}", message.command_name);
-        println!("Transaction ID: {}", message.transaction_id);
-
         match message.command_name.as_str() {
             "connect" => {
                 self.send_message(WindowAcknowledgementSize { window_acknowledgement_size: 5000000 }, 2, 5, 0);
@@ -137,8 +137,28 @@ impl RtmpConnection {
 
                 println!("Successfully responded to connect request")
             }
+            "createStream" => {
+                self.send_message(AMFMessage {
+                    transaction_id: message.transaction_id,
+                    command_name: "_result".to_string(),
+                    properties: Vec::new(),
+                    information: Vec::new(),
+                }, 3, 20, 0)
+            }
+            "publish" => {
+                self.send_message(AMFMessage {
+                    transaction_id: 0.0,
+                    command_name: "onStatus".to_string(),
+                    properties: Vec::new(),
+                    information: vec![
+                        ("code".to_string(), (String("NetStream.Publish.Start".to_string()))),
+                        ("level".to_string(), (String("status".to_string()))),
+                        ("description".to_string(), (String("Started publishing stream.".to_string()))),
+                    ]
+                }, 3, 20, 0)
+            }
             _ => {
-                println!("Unsupported command: {}", message.command_name);
+                println!("Unsupported command: {} with data: {:?}", message.command_name, message.information);
             }
         }
     }
@@ -150,10 +170,6 @@ impl RtmpConnection {
                 println!("Set chunk size");
                 self.max_chunk_size = u32::from_be_bytes(buf[0..4].try_into().unwrap()) as usize;
                 println!("New max chunk size: {}", self.max_chunk_size);
-            }
-            20 => {
-                // Put our buf into an actual buffer so that we can track our position after reading
-                self.handle_command_message(Cursor::new(buf));
             }
             _ => {
                 println!("Unsupported control stream message type: {}", header.message_type_id);
@@ -215,15 +231,55 @@ impl RtmpConnection {
                     return;
                 }
             };
-            println!("Received header");
 
-            // Get min of max chunk size and message length
-            let chunk_size = std::cmp::min(self.max_chunk_size, header.message_length as usize);
+            // If this csid exists in the incomplete messages hashmap, we need to get the remaining bytes to read to complete the msg and pass it into the min
+            let mut chunk_size = std::cmp::min(self.max_chunk_size, header.message_length as usize);
+            if self.incomplete_chunks.contains_key(&header.basic_header.csid) {
+                let remaining_bytes = header.message_length as usize - self.incomplete_chunks.get(&header.basic_header.csid).unwrap().clone().len();
+                chunk_size = std::cmp::min(chunk_size, remaining_bytes);
+            }
+
             let mut buf = vec![0; chunk_size];
 
             // Now we read the rest of the message
             match self.stream.read_exact(&mut buf) {
                 Ok(_) => {
+                    // RTMP will sometimes send parts of data in different chunks
+                    // We need to make sure we read all of the data and parse it all at once.
+                    // Essentially, we need to read until we get a message with a message length
+                    // We can do this by keeping vecs of a particular chunk stream id in a hashmap and
+                    // continuously reading from the socket and adding to our storec vec until we get
+                    // a vec with a message length matching what we expect
+                    // We can then parse the message and continue reading from the socket
+
+                    // If the size of this message would exceed the max chunk size, we need to do special handling
+                    if header.message_length > self.max_chunk_size as u32 {
+                        println!("CSID {} has message length {} which exceeds max chunk size {}", header.basic_header.csid, header.message_length, self.max_chunk_size);
+
+                        // Retrieve the incomplete chunk vector for the chunk stream ID
+                        let chunk_vec = self.incomplete_chunks.entry(header.basic_header.csid).or_insert_with(Vec::new);
+
+                        // Append the received data to the incomplete chunk vector
+                        chunk_vec.extend_from_slice(&buf);
+
+                        // Check if we have a complete message
+                        if chunk_vec.len() == header.message_length as usize {
+                            // If we do, we parse it and continue
+                            println!("Found complete message of length {} and target length {}", chunk_vec.len(), header.message_length);
+                            buf = chunk_vec.to_vec();
+                            self.incomplete_chunks.remove(&header.basic_header.csid);
+                        } else {
+                            // Otherwise, we continue reading from the socket
+                            println!("Incomplete message of length {} and target length {}", chunk_vec.len(), header.message_length);
+                            continue;
+                        }
+                    }
+
+
+                    if header.message_type_id == 20 {
+                        self.handle_command_message(Cursor::new(&buf));
+                        continue;
+                    }
                     // If this message is targeting the control stream, we need to parse it properly
                     if header.message_stream_id == 0 {
                         self.handle_control_stream_msg(header, &buf);
