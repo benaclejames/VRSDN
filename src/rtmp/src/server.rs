@@ -7,9 +7,10 @@ use crate::Serializable;
 use crate::control_message::{SetChunkSize, SetPeerBandwidth, WindowAcknowledgementSize};
 use crate::command_message::{AMFCall, AMFMessage, PlayMessage};
 use amf::amf0::Value::{String, Number};
+use crate::handshake::handshake;
 
 pub struct RtmpConnection {
-    stream: TcpStream,
+    pub stream: TcpStream,
     max_chunk_size: usize,
     incomplete_chunks: HashMap<u8, Vec<u8>>,
 }
@@ -21,86 +22,6 @@ impl RtmpConnection {
             max_chunk_size: 128,
             incomplete_chunks: HashMap::new(),
         }
-    }
-
-    fn handshake(&mut self) -> Result<u8, &'static str> {
-        // Read 1 byte for the CS0 version
-        let mut buf = [0; 1];
-        let c0 = match self.stream.read_exact(&mut buf) {
-            Ok(_) => {
-                let c0 = CS0::deserialize(&buf[..]);
-
-                c0
-            }
-            Err(err) => {
-                eprintln!("Error reading CS0 version: {}", err);
-                return Err("Error reading CS0 version");
-            }
-        };
-
-        // Now read 1536 bytes for the CS1 chunk
-        let mut buf2 = vec![0; 1536];
-        let c1: CS1 = match self.stream.read_exact(&mut buf2) {
-            Ok(_) =>
-                match CS1::deserialize(&buf2[..]) {
-                    Ok(c1) => c1,
-                    Err(err) => {
-                        eprintln!("Error reading CS1: {}", err);
-                        return Err("Error reading CS1");
-                    }
-                }
-            Err(err) => {
-                if err.kind() == ErrorKind::UnexpectedEof {
-                    eprintln!("Unexpected end of file while reading CS1");
-                } else {
-                    eprintln!("Error reading CS1: {}", err);
-                }
-                return Err("Error reading CS1")
-            }
-        };
-
-        // Now we send our own bytes. One byte with the same version as cs0
-        // then our own cs1 chunk. We need to use the same timestamp as the client but random bytes
-        // for the rest.
-        let s0 = c0;
-        let s1 = CS1 {
-            timestamp: 1,
-            zero: 0,
-            random_bytes: (0..1528).map(|_| { rand::random::<u8>() }).collect(),
-        };
-        let s2 = CS1 {
-            timestamp: c1.timestamp,
-            zero: 0,
-            random_bytes: c1.random_bytes
-        };
-
-        // Send our own S0, S1 and S2
-        self.stream.write_all(&s0.unwrap().serialize().unwrap()).unwrap();
-        self.stream.write_all(&s1.serialize().unwrap()).unwrap();
-        self.stream.write_all(&s2.serialize().unwrap()).unwrap();
-
-        // Now we wait for the client to send their CS2
-        let mut buf3 = vec![0; 1536];
-        match self.stream.read_exact(&mut buf3) {
-            Ok(_) =>
-                match CS1::deserialize(&buf3[..]) {
-                    Ok(c2) => c2,
-                    Err(err) => {
-                        eprintln!("Error reading CS2: {}", err);
-                        return Err("Error reading CS2");
-                    }
-                }
-            Err(err) => {
-                if err.kind() == ErrorKind::UnexpectedEof {
-                    eprintln!("Unexpected end of file while reading CS2");
-                } else {
-                    eprintln!("Error reading CS2: {}", err);
-                }
-                return Err("Error reading CS2")
-            }
-        };
-
-        Ok(3)
     }
 
     fn handle_command_message(&mut self, mut cursor: Cursor<&Vec<u8>>) {
@@ -261,7 +182,7 @@ impl RtmpConnection {
     pub fn handle_connection(&mut self) {
         println!("Handling connection from {}", self.stream.peer_addr().unwrap());
 
-        match self.handshake() {
+        match handshake(self) {
             Ok(_) => {
                 println!("Shook the fuk outta that hand");
             }
