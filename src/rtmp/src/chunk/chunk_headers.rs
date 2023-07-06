@@ -20,7 +20,7 @@ impl Serializable for ChunkBasicHeader {
         return Ok(vec![self.fmt << 6 | self.csid]);
     }
 
-    fn deserialize<R>(mut reader: R) -> Result<Self, &'static str> where R: io::Read, Self: Sized {
+    fn deserialize<R>(reader: &mut R) -> Result<Self, &'static str> where R: io::Read, Self: Sized {
         let mut buf = [0; 1];
         match reader.read_exact(&mut buf) {
             Ok(_) => {}
@@ -70,9 +70,9 @@ impl Serializable for ChunkHeader {
         Ok(buf)
     }
 
-    fn deserialize<R>(mut reader: R) -> Result<Self, &'static str> where R: io::Read, Self: Sized {
+    fn deserialize<R>(reader: &mut R) -> Result<Self, &'static str> where R: io::Read, Self: Sized {
         // First we read the basic header to determine the fmt to attempt to read
-        let basic_header = match ChunkBasicHeader::deserialize(&mut reader) {
+        let basic_header = match ChunkBasicHeader::deserialize(reader) {
             Ok(bh) => bh,
             _ => Err("Error reading basic header")?,
         };
@@ -164,7 +164,7 @@ impl Serializable for ChunkHeader {
             _ => Err("Unsupported fmt")?,
         };
 
-        // Copy the header and store it as the previous chunk header
+        // Copy the header and store it as the previous chunk_headers header
         unsafe {
             PREV_CHUNK_HEADER = Some(header.clone());
         }

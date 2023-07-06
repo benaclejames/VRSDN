@@ -30,7 +30,7 @@ fn tuple_to_vec_pair(source: Vec<(String, Value)>) -> Vec<Pair<String, Value>> {
 }
 
 impl Serializable for AMFMessage {
-    fn deserialize<R>(mut reader: R) -> Result<Self, &'static str> where R: Read, Self: Sized {
+    fn deserialize<R>(mut reader: &mut R) -> Result<Self, &'static str> where R: Read, Self: Sized {
         let command_name: String = match amf::Value::read_from(&mut reader, Version::Amf0) {
             Ok(amf) => amf.try_as_str().unwrap().to_string(),
             _ => Err("Error reading AMF0 Command Name")?,
@@ -56,7 +56,7 @@ impl Serializable for AMFMessage {
 }
 
 impl Serializable for AMFCall {
-    fn deserialize<R>(mut reader: R) -> Result<Self, &'static str> where R: Read, Self: Sized {
+    fn deserialize<R>(mut reader: &mut R) -> Result<Self, &'static str> where R: Read, Self: Sized {
         let command_object: Vec<(String, Value)> = match amf::Value::read_from(&mut reader, Version::Amf0) {
             Ok(amf::Value::Amf0(Value::Object {entries, ..})) => vec_pair_to_tuple(entries),
             _ => Vec::new()
@@ -82,7 +82,7 @@ impl Serializable for AMFCall {
 }
 
 impl Serializable for PlayMessage {
-    fn deserialize<R>(mut reader: R) -> Result<Self, &'static str> where R: Read, Self: Sized {
+    fn deserialize<R>(mut reader: &mut R) -> Result<Self, &'static str> where R: Read, Self: Sized {
         // Now we expect a null for the command object
         match amf::Value::read_from(&mut reader, Version::Amf0) {
             Ok(amf::Value::Amf0(Value::Null)) => {},

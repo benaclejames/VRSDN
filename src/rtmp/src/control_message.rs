@@ -14,12 +14,12 @@ impl Serializable for SetChunkSize {
         Ok(buf)
     }
 
-    fn deserialize<R>(mut reader: R) -> Result<Self, &'static str> where R: Read, Self: Sized
+    fn deserialize<R>(reader: &mut R) -> Result<Self, &'static str> where R: Read, Self: Sized
     {
         let mut chunk_size_bytes = [0u8; 4];
         match reader.read_exact(&mut chunk_size_bytes) {
             Ok(_) => {}
-            Err(_) => Err("Error reading chunk size")?,
+            Err(_) => Err("Error reading chunk_headers size")?,
         };
 
         Ok(SetChunkSize {
@@ -40,7 +40,7 @@ impl Serializable for WindowAcknowledgementSize {
         Ok(buf)
     }
 
-    fn deserialize<R>(mut reader: R) -> Result<Self, &'static str> where R: Read, Self: Sized
+    fn deserialize<R>(reader: &mut R) -> Result<Self, &'static str> where R: Read, Self: Sized
     {
         let mut window_acknowledgement_size_bytes = [0u8; 4];
         match reader.read_exact(&mut window_acknowledgement_size_bytes) {
@@ -67,7 +67,7 @@ impl Serializable for SetPeerBandwidth {
         Ok(buf)
     }
 
-    fn deserialize<R>(mut reader: R) -> Result<Self, &'static str> where R: Read, Self: Sized
+    fn deserialize<R>(reader: &mut R) -> Result<Self, &'static str> where R: Read, Self: Sized
     {
         let mut window_acknowledgement_size_bytes = [0u8; 4];
         match reader.read_exact(&mut window_acknowledgement_size_bytes) {

@@ -1,4 +1,4 @@
-use std::io;
+use std::io::Read;
 use std::net::TcpListener;
 
 mod server;
@@ -6,10 +6,12 @@ mod handshake;
 mod chunk;
 mod control_message;
 mod command_message;
+mod socket;
+
 
 trait Serializable {
     fn serialize(&self) -> Result<Vec<u8>, &'static str>;
-    fn deserialize<R>(reader: R) -> Result<Self, &'static str> where R : io::Read, Self: Sized;
+    fn deserialize<R>(reader: &mut R) -> Result<Self, &'static str> where R : Read, Self: Sized;
 }
 
 pub fn start() {
