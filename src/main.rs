@@ -3,5 +3,6 @@ use rtmp;
 fn main() {
     println!("Awaiting connection!");
 
-    rtmp::start();
+    let mut server = rtmp::RtmpServer::new();
+    server.start();
 }

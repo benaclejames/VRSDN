@@ -1,25 +1,30 @@
 pub use crate::handshake::{CS0, CS1};
 use std::net::TcpStream;
 use std::io::Cursor;
-use std::sync::mpsc::channel;
+use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{channel, Sender};
 use crate::Serializable;
 use crate::command_message::{AMFCall, AMFMessage, PlayMessage};
 use amf::amf0::Value::{String, Number};
+use crate::chunk::chunk_container::ChunkContainer;
 use crate::chunk::chunk_headers::ChunkHeader;
+use crate::chunk::chunk_router::ChunkRouter;
 use crate::chunk::chunk_wrangler::ChunkWrangler;
 use crate::control_message::{SetChunkSize, SetPeerBandwidth, WindowAcknowledgementSize};
 use crate::handshake::handshake;
 use crate::socket::RtmpSocket;
 
 pub struct RtmpConnection {
+    pub chunk_router: Arc<Mutex<ChunkRouter>>,
     pub socket: RtmpSocket,
     pub multiplexer: ChunkWrangler,
 }
 
 impl RtmpConnection {
-    pub fn new(stream: TcpStream) -> Self {
+    pub fn new(chunk_router: Arc<Mutex<ChunkRouter>>, stream: TcpStream, sender: Sender<ChunkContainer>) -> Self {
         let socket = RtmpSocket::new(stream);
         RtmpConnection {
+            chunk_router,
             socket,
             multiplexer : ChunkWrangler::new(),
         }
