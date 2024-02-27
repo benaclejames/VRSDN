@@ -1,8 +1,9 @@
 use rtmp;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     println!("Awaiting connection!");
 
     let mut server = rtmp::RtmpServer::new();
-    server.start();
+    server.start().await;
 }

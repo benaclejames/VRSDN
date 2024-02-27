@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 amf = "1.0.0"
 rand = "0.8.5"
+tokio = { version = "1.36.0", features = ["full"] }

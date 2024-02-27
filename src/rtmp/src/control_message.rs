@@ -28,6 +28,7 @@ impl Serializable for SetChunkSize {
     }
 }
 
+#[derive(Debug)]
 pub struct WindowAcknowledgementSize {
     // 32 bit integer
     pub window_acknowledgement_size: u32,
@@ -54,6 +55,7 @@ impl Serializable for WindowAcknowledgementSize {
     }
 }
 
+#[derive(Debug)]
 pub struct SetPeerBandwidth {
     pub window_acknowledgement_size: u32,
     pub limit_type: u8,

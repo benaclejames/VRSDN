@@ -14,6 +14,7 @@ pub struct AMFCall {
     pub additional_args: Vec<(String, Value)>,
 }
 
+#[derive(Debug)]
 pub struct PlayMessage {
     pub stream_name: String,
     pub start: f64,
@@ -93,13 +94,11 @@ impl Serializable for PlayMessage {
             Ok(amf) => amf.try_as_str().unwrap().to_string(),
             _ => Err("Error reading AMF0 Stream Name")?,
         };
-        println!("Stream name: {}", stream_name);
 
         let start: f64 = match amf::Value::read_from(&mut reader, Version::Amf0) {
             Ok(amf::Value::Amf0(Value::Number(x))) => x,
             _ => Err("Error reading AMF0 Start")?,
         };
-        println!("Start: {}", start);
 
 
         Ok(PlayMessage {

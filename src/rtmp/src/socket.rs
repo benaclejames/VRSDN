@@ -1,7 +1,7 @@
 use std::io;
 use std::net::TcpStream;
 use crate::Serializable;
-use std::io::{Read, Write};
+use std::io::{Write};
 use crate::chunk::chunk_headers::{ChunkBasicHeader, ChunkHeader};
 
 pub struct RtmpSocket {
@@ -27,10 +27,6 @@ impl io::Write for RtmpSocket {
 impl RtmpSocket {
     pub fn new(socket: TcpStream) -> Self {
         Self { socket }
-    }
-
-    pub fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.socket.read(buf)
     }
 
     pub fn send_bytes(&mut self, msg: Vec<u8>, chunk_stream_id: u8, type_id: u8, message_stream_id: u32) {

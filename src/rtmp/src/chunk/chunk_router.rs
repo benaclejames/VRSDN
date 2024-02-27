@@ -1,9 +1,8 @@
 use std::collections::HashMap;
-use std::sync::mpsc::Receiver;
-use crate::chunk::chunk_container::ChunkContainer;
+use tokio::sync::mpsc::Receiver;
 
 pub struct ChunkRouter {
-    pub recievers: HashMap<String, Receiver<ChunkContainer>>,
+    pub recievers: HashMap<String, Receiver<Vec<u8>>>,
 }
 
 impl ChunkRouter {
