@@ -1,5 +1,6 @@
 use std::io::Read;
-use std::net::TcpListener;
+use std::io;
+use tokio::net::TcpListener;
 use tokio::sync::mpsc::{channel};
 use std::sync::{Arc, Mutex};
 use crate::chunk::chunk_router::ChunkRouter;
@@ -30,20 +31,15 @@ impl RtmpServer {
         }
     }
 
-    pub async fn start(&mut self) {
+    pub async fn start(&self) -> io::Result<()> {
         // Start a TCP server
-        let listener = TcpListener::bind("127.0.0.1:1935").unwrap();
+        let listener = TcpListener::bind("127.0.0.1:1935").await?;
 
-        for stream in listener.incoming() {
-            let stream = stream.unwrap();
-            println!("Connection established!");
+        loop {
+            let (socket, _) = listener.accept().await?;
             let (tx, rx) = channel(9999);
-            self.chunk_router.lock().unwrap().recievers.insert("test".to_string(), rx);
-            let mut connection = server::RtmpConnection::new(stream, tx);
-            // Start a thread to handle the connection, and pass a reference to ourselves
-            tokio::spawn(async move {
-                connection.handle_connection().await;
-            });
+            let mut connection = server::RtmpConnection::new(socket, tx);
+            connection.handle_connection().await;
         }
     }
 }

@@ -1,4 +1,6 @@
 use std::io;
+use tokio::net::TcpStream;
+use tokio::io::AsyncReadExt;
 use crate::Serializable;
 
 pub struct ChunkBasicHeader {
@@ -15,14 +17,14 @@ pub struct ChunkHeader {
     pub message_stream_id: u32,
 }
 
-impl Serializable for ChunkBasicHeader {
+impl ChunkBasicHeader {
     fn serialize(&self) -> Result<Vec<u8>, &'static str> {
         return Ok(vec![self.fmt << 6 | self.csid]);
     }
 
-    fn deserialize<R>(reader: &mut R) -> Result<Self, &'static str> where R: io::Read, Self: Sized {
+    pub async fn deserialize(reader: &mut TcpStream) -> Result<Self, &'static str> where Self: Sized {
         let mut buf = [0; 1];
-        match reader.read_exact(&mut buf) {
+        match reader.read_exact(&mut buf).await {
             Ok(_) => {}
             _ => Err("Error reading basic header")?,
         };
@@ -30,7 +32,7 @@ impl Serializable for ChunkBasicHeader {
         let mut csid = buf[0] & 0b00111111;
 
         if csid == 0 {
-            match reader.read_exact(&mut buf) {
+            match reader.read_exact(&mut buf).await {
                 Ok(_) => csid = buf[0] + 64,
                 _ => Err("Error reading basic header csid 1")?,
             }
@@ -38,7 +40,7 @@ impl Serializable for ChunkBasicHeader {
 
         if csid == 1 {
             let mut buf = [0; 2];
-            match reader.read_exact(&mut buf) {
+            match reader.read_exact(&mut buf).await {
                 Ok(_) => csid = u16::from_be_bytes(buf) as u8 + 64,
                 _ => Err("Error reading basic header csid 2")?,
             }
@@ -53,8 +55,8 @@ impl Serializable for ChunkBasicHeader {
 
 static mut PREV_CHUNK_HEADER: Option<ChunkHeader> = None;
 
-impl Serializable for ChunkHeader {
-    fn serialize(&self) -> Result<Vec<u8>, &'static str> {
+impl ChunkHeader {
+    pub fn serialize(&self) -> Result<Vec<u8>, &'static str> {
         let mut buf = Vec::new();
         buf.extend_from_slice(&self.basic_header.serialize().unwrap());
 
@@ -70,9 +72,9 @@ impl Serializable for ChunkHeader {
         Ok(buf)
     }
 
-    fn deserialize<R>(reader: &mut R) -> Result<Self, &'static str> where R: io::Read, Self: Sized {
+    pub async fn deserialize(reader: &mut TcpStream) -> Result<Self, &'static str> where Self: Sized {
         // First we read the basic header to determine the fmt to attempt to read
-        let basic_header = match ChunkBasicHeader::deserialize(reader) {
+        let basic_header = match ChunkBasicHeader::deserialize(reader).await {
             Ok(bh) => bh,
             _ => Err("Error reading basic header")?,
         };
@@ -82,7 +84,7 @@ impl Serializable for ChunkHeader {
         let header = match basic_header.fmt {
             0 => {
                 let mut buf = [0; 11];
-                match reader.read_exact(&mut buf) {
+                match reader.read_exact(&mut buf).await {
                     Ok(_) =>  {
                         // 3 byte timestamp (we need to pad this to 4 bytes)
                         let timestamp = u32::from_be_bytes([0, buf[0], buf[1], buf[2]]);
@@ -106,7 +108,7 @@ impl Serializable for ChunkHeader {
             }
             1 => {
                 let mut buf = [0; 7];
-                match reader.read_exact(&mut buf) {
+                match reader.read_exact(&mut buf).await {
                     Ok(_) =>  {
                         // 3 byte timestamp (we need to pad this to 4 bytes)
                         let timestamp_delta = u32::from_be_bytes([0, buf[0], buf[1], buf[2]]);
@@ -134,7 +136,7 @@ impl Serializable for ChunkHeader {
             }
             2 => {
                 let mut buf = [0; 3];
-                match reader.read_exact(&mut buf) {
+                match reader.read_exact(&mut buf).await {
                     Ok(_) => {
                         let timestamp_delta = u32::from_be_bytes([0, buf[0], buf[1], buf[2]]);
 

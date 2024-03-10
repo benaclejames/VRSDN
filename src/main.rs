@@ -1,9 +1,10 @@
+use std::io;
 use rtmp;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> io::Result<()> {
     println!("Awaiting connection!");
 
-    let mut server = rtmp::RtmpServer::new();
-    server.start().await;
+    let server = rtmp::RtmpServer::new();
+    server.start().await
 }

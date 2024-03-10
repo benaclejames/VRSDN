@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::Read;
+use tokio::io::AsyncReadExt;
 use crate::chunk::chunk_headers::ChunkHeader;
 use crate::Serializable;
 use crate::socket::RtmpSocket;
@@ -19,8 +20,8 @@ impl ChunkWrangler {
         }
     }
 
-    pub fn read_chunk(&mut self, socket: &mut RtmpSocket) -> Result<(ChunkHeader, Vec<u8>), &'static str> {
-        let header = match ChunkHeader::deserialize(socket) {
+    pub async fn read_chunk(&mut self, socket: &mut RtmpSocket) -> Result<(ChunkHeader, Vec<u8>), &'static str> {
+        let header = match ChunkHeader::deserialize(&mut socket.socket).await {
             Ok(header) => header,
             Err(err) => return Err(err),
         };
@@ -35,7 +36,7 @@ impl ChunkWrangler {
         let mut buf = vec![0; chunk_size];
 
         // Now we read the rest of the message
-        match socket.read_exact(&mut buf) {
+        match socket.socket.read_exact(&mut buf).await {
             Ok(_) => {
                 // RTMP will sometimes send parts of data in different chunks
                 // We need to make sure we read all of the data and parse it all at once.

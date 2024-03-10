@@ -1,6 +1,7 @@
-use std::net::TcpStream;
 use std::io::{Cursor, ErrorKind, Read, Write};
+use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::Sender;
+use tokio::net::TcpStream;
 use crate::Serializable;
 use crate::command_message::{AMFCall, AMFMessage, PlayMessage};
 use amf::amf0::Value::{String, Number};
@@ -10,6 +11,7 @@ use crate::control_message::{SetChunkSize, SetPeerBandwidth, WindowAcknowledgeme
 use crate::socket::RtmpSocket;
 use crate::handshake::{CS0, CS1};
 use crate::server::PublishingType::Live;
+use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, PartialEq)]
 pub enum PublishingType {
@@ -35,10 +37,10 @@ impl RtmpConnection {
         }
     }
 
-    pub fn handshake(&mut self) -> Result<u8, &'static str> {
+    pub async fn handshake(&mut self) -> Result<u8, &'static str> {
         // Read 1 byte for the CS0 version
         let mut buf = [0; 1];
-        let c0 = match self.socket.read_exact(&mut buf) {
+        let c0 = match self.socket.socket.read_exact(&mut buf).await {
             Ok(_) => {
                 let c0 = CS0::deserialize(&mut buf.as_ref()).unwrap();
 
@@ -52,7 +54,7 @@ impl RtmpConnection {
 
         // Now read 1536 bytes for the CS1 chunk_headers
         let mut buf2 = vec![0; 1536];
-        let c1: CS1 = match self.socket.read_exact(&mut buf2) {
+        let c1: CS1 = match self.socket.socket.read_exact(&mut buf2).await {
             Ok(_) =>
             // Pass the buf2 as a mut reference to deserialize
                 match CS1::deserialize(&mut buf2.as_slice()) {
@@ -88,13 +90,13 @@ impl RtmpConnection {
         };
 
         // Send our own S0, S1 and S2
-        self.socket.write_all(&s0.serialize().unwrap()).unwrap();
-        self.socket.write_all(&s1.serialize().unwrap()).unwrap();
-        self.socket.write_all(&s2.serialize().unwrap()).unwrap();
+        self.socket.socket.write_all(&s0.serialize().unwrap()).await;
+        self.socket.socket.write_all(&s1.serialize().unwrap()).await;
+        self.socket.socket.write_all(&s2.serialize().unwrap()).await;
 
         // Now we wait for the client to send their CS2
         let mut buf3 = vec![0; 1536];
-        match self.socket.read_exact(&mut buf3) {
+        match self.socket.socket.read_exact(&mut buf3).await {
             Ok(_) =>
                 match CS1::deserialize(&mut buf3.as_slice()) {
                     Ok(c2) => c2,
@@ -116,7 +118,7 @@ impl RtmpConnection {
         Ok(3)
     }
 
-    fn handle_command_message(&mut self, mut cursor: Cursor<&Vec<u8>>) {
+    async fn handle_command_message(&mut self, mut cursor: Cursor<&Vec<u8>>) {
         // First, we get the command name as a str
         let message = match AMFMessage::deserialize(&mut cursor) {
             Ok(message) => message,
@@ -136,9 +138,9 @@ impl RtmpConnection {
                     }
                 };
 
-                self.socket.send_message(WindowAcknowledgementSize { window_acknowledgement_size: 5000000 }, 2, 5, 0);
-                self.socket.send_message(SetPeerBandwidth { window_acknowledgement_size: 5000000, limit_type: 1 }, 2, 6, 0);
-                self.socket.send_message(SetChunkSize { chunk_size: 5000 }, 2, 1, 0);
+                self.socket.send_message(WindowAcknowledgementSize { window_acknowledgement_size: 5000000 }, 2, 5, 0).await;
+                self.socket.send_message(SetPeerBandwidth { window_acknowledgement_size: 5000000, limit_type: 1 }, 2, 6, 0).await;
+                self.socket.send_message(SetChunkSize { chunk_size: 5000 }, 2, 1, 0).await;
 
                 let response_header = AMFMessage {
                     transaction_id: 1.0,
@@ -160,7 +162,7 @@ impl RtmpConnection {
                     ],
                 };
 
-                self.socket.send_bytes([response_header.serialize().unwrap(), response_body.serialize().unwrap()].concat(), 3, 20, 0);
+                self.socket.send_bytes([response_header.serialize().unwrap(), response_body.serialize().unwrap()].concat(), 3, 20, 0).await;
 
                 println!("Successfully responded to connect request")
             }
@@ -175,7 +177,7 @@ impl RtmpConnection {
                     additional_args: Vec::new(),
                 };
 
-                self.socket.send_bytes([response_header.serialize().unwrap(), response_body.serialize().unwrap()].concat(), 3, 20, 0);
+                self.socket.send_bytes([response_header.serialize().unwrap(), response_body.serialize().unwrap()].concat(), 3, 20, 0).await;
             }
             "publish" => {
                 // expect null amf object first
@@ -229,7 +231,7 @@ impl RtmpConnection {
                         ]
                     };
 
-                    self.socket.send_bytes([response_header.serialize().unwrap(), response_body.serialize().unwrap()].concat(), 3, 20, 0);
+                    self.socket.send_bytes([response_header.serialize().unwrap(), response_body.serialize().unwrap()].concat(), 3, 20, 0).await;
                 }
             }
             "play" => {
@@ -298,7 +300,7 @@ impl RtmpConnection {
     }
 
     pub async fn handle_connection(&mut self) {
-        match self.handshake() {
+        match self.handshake().await {
             Ok(_) => {
                 println!("Shook the fuk outta that hand");
             }
@@ -311,7 +313,7 @@ impl RtmpConnection {
         // Now while our connection is open, we read chunk_headers by chunk_headers
         // and print the data we receive
         loop {
-            let (header, data) = match self.multiplexer.read_chunk(&mut self.socket) {
+            let (header, data) = match self.multiplexer.read_chunk(&mut self.socket).await {
                 Ok((header, data)) => (header, data),
                 Err(_) => {
                     continue;
@@ -319,7 +321,7 @@ impl RtmpConnection {
             };
 
             if header.message_type_id == 20 {
-                self.handle_command_message(Cursor::new(&data));
+                self.handle_command_message(Cursor::new(&data)).await;
                 continue;
             }
             // If this message is targeting the control stream, we need to parse it properly
